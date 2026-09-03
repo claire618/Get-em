@@ -3,12 +3,38 @@ const express = require('express');
 const cron = require('node-cron');
 const { getStaleContacts } = require('./lib/hubspot');
 const { findNewAccountCandidates } = require('./lib/zoominfo');
-const { postDigest, postSignalPing } = require('./lib/slack');
+const { postDigest, postSignalPing, postVisitorPing } = require('./lib/slack');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// ---- Real-time website visitor webhook (RB2B) ----
+// In RB2B: Integrations -> Webhook -> paste this endpoint's full URL:
+// https://<your-railway-url>/webhook/rb2b-visitor
+// RB2B sends a fixed field-name payload (see support.rb2b.com Setup Guide: Webhook).
+app.post('/webhook/rb2b-visitor', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const companyName = body['Company Name'];
+    const page = body['Captured URL'];
+    const city = body['City'];
+    const region = body['State'];
+
+    // RB2B's own test payload uses Company Name "RB2B" - ignore it so test
+    // pings from their "Send a Test Event" button don't spam Slack.
+    if (companyName === 'RB2B') {
+      return res.status(200).send('ignored test payload');
+    }
+
+    await postVisitorPing({ companyName, page, city, region });
+    res.status(200).send('ok');
+  } catch (err) {
+    console.error('Error handling RB2B webhook', err);
+    res.status(500).send('error');
+  }
+});
 
 // ---- Real-time email signal webhook ----
 // Point a HubSpot workflow's "webhook" action at POST /webhook/hubspot-signal.
